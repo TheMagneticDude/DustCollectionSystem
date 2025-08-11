@@ -13,6 +13,15 @@
 #include <WiFi.h>
 #include <EEPROM.h>
 
+//number of tools there are 
+#define MAX_TOOLS 8
+
+bool toolStates[MAX_TOOLS];           // true if tool i is on
+unsigned long lastHeardTimes[MAX_TOOLS]; // last ON signal per tool
+bool graceActive[MAX_TOOLS];          // grace period per tool
+unsigned long graceStart[MAX_TOOLS];
+
+
 // === Servo Setup ===
 Servo myServo;
 const int servoPin = 16;   //pin for servo, must be PWM capable
@@ -88,24 +97,19 @@ void triggerServoAction(int angle) {  //move servo to open/closed angle
 void OnDataRecv(const uint8_t * mac_addr, const uint8_t *incomingData, int len) {
   memcpy(&myData, incomingData, sizeof(myData));
 
-  if (myData.id >= 1 && myData.id <= 8) {
+  int toolID = myData.id - 1; //get tool id 
+  Serial.printf("Tool %d is ON signal\n", myData.id);
+
+
+  if (toolID >= 0 && toolID < MAX_TOOLS) {
     if (myData.x == 1 || myData.y == 1) {
       Serial.printf("Tool %d ON signal received\n", myData.id);
 
-      lastHeardTime = millis();  //reset timeout
-
-      //if an ON signal is heard during the grace period, cancel it
-      if (gracePeriodActive) {
-        Serial.println("→ ON signal during grace period → Cancelling grace period");
-        gracePeriodActive = false;
-      }
-
-      //if tool wasn't already active
-      if (!toolActive) {
-        triggerServoAction(openAngle);
-        Serial.println("→ Tool activity started → Open + LED ON");
-        toolActive = true;
-      }
+      //tool id system
+      //mark tool as active
+      toolStates[toolID] = true;//each tool state
+      lastHeardTimes[toolID] = millis();//last heard time for each tool
+      graceActive[toolID] = false;//grace for each tool
 
       //if recovering and activity 
       if (recoveryMode) {
@@ -119,6 +123,14 @@ void OnDataRecv(const uint8_t * mac_addr, const uint8_t *incomingData, int len) 
   } else {
     Serial.println("Error: Board ID out of range!");
   }
+}
+
+//get if any tool is active
+bool anyToolActive() {
+    for (int i = 0; i < MAX_TOOLS; i++) {
+        if (toolStates[i]) return true;
+    }
+    return false;
 }
 
 // === Setup ===
@@ -191,21 +203,48 @@ void loop() {
     }
   }
 
+//timeout detection
+  for (int i = 0; i < MAX_TOOLS; i++) {
+    if (toolStates[i]) { // only check active tools
+      if (millis() - lastHeardTimes[i] > ON_TIMEOUT) {
+        Serial.printf("Tool %d signal lost → Starting grace period\n", i+1);
+        toolStates[i] = false;
+        graceActive[i] = true;
+        graceStart[i] = millis();
+      }
+    }
+  }
+
+
   // === Grace period logic ===
-  if (toolActive && !recoveryMode) {
-    //start grace period after ON_TIMEOUT of silence
-    if (!gracePeriodActive && now - lastHeardTime >= ON_TIMEOUT) {
-      Serial.println("→ No ON signal recently → Starting grace period");
-      gracePeriodActive = true;
-      gracePeriodStart = now;
+  //scan for grace periods
+  for (int i = 0; i < MAX_TOOLS; i++) {
+        if (!toolStates[i] && graceActive[i] && now - graceStart[i] >= GRACE_PERIOD_DURATION) {
+            graceActive[i] = false; // grace expired for this tool
+        }
     }
 
-    //if grace period active and expired, close servo
-    if (gracePeriodActive && now - gracePeriodStart >= GRACE_PERIOD_DURATION) {
-      Serial.println("→ Grace period expired → Closing servo");
-      triggerServoAction(closedAngle);
-      toolActive = false;
-      gracePeriodActive = false;
+  //if ANY tool is on then keep collector on
+      // Turn collector ON if any tool active
+    if (anyToolActive()) {
+        if (!toolActive) {
+            triggerServoAction(openAngle);
+            toolActive = true;
+        }
+    } else {
+        // Only close if ALL grace periods expired and no tools active
+        bool allGraceDone = true;
+        for (int i = 0; i < MAX_TOOLS; i++) {
+            if (toolStates[i] || graceActive[i]) {
+                allGraceDone = false;
+                break;
+            }
+        }
+        if (allGraceDone && toolActive) {
+            Serial.println("→ Grace period expired for all tools → Closing servo");
+            triggerServoAction(closedAngle);
+            toolActive = false;
+        }
     }
   }
 }
