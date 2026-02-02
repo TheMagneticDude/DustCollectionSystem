@@ -38,6 +38,16 @@ Node tools[MAX_TOOLS + 1];
 const int BUTTONPIN = 13; //Pin the pushbutton is connected to
 volatile bool ButtonPressed;
 
+// === Elevator Panel Setup ===
+const int UPPIN = 6;
+volatile bool UpPressed;
+
+const int DOWNPIN = 7;
+volatile bool DownPressed;
+
+const int UPLEDPin = 8;
+const int DOWNLEDPIN = 15;
+
 // === Servo Setup ===
 Servo myServo;
 const int SERVOPIN = 16;   //pin for servo, must be PWM capable
@@ -49,6 +59,10 @@ const int NEUTRALANGLE = 82; //angle returned to after opening/closing
 const int LEDPIN = 21;  //pin connected to LED for status change
 bool ledState = false;  //tracks current LED state
 unsigned long lastBlinkTime = 0;
+
+
+
+
 
 // === ESP-NOW Setup ===
 typedef struct struct_message {
@@ -108,7 +122,7 @@ void OnDataRecv(const uint8_t * mac_addr, const uint8_t *incomingData, int len) 
 
 // Toggles isOn for special tool if button has not been pressed in over 1 second (handles debouncing)
 void buttonPressISR () {
-  ButtonPressed = TRUE;
+  UpPressed = TRUE;
 }
 
 // === Setup ===
@@ -118,6 +132,19 @@ void setup() {
   pinMode(BUTTONPIN, INPUT_PULLUP);
   pinMode(LEDPIN, OUTPUT);
   digitalWrite(LEDPIN, LOW);
+
+  //Elevator Panel stuffs
+  pinMode(UPPIN, INPUT_PULLUP);
+  pinMode(DOWNPIN, INPUT_PULLUP);
+
+  pinMode(UPLEDPIN, OUTPUT);
+  pinMode(DOWNLEDPIN, OUTPUT);
+
+  digitalWrite(UPLEDPIN, LOW);
+  digitalWrite(DOWNLEDPIN, LOW);
+
+
+  //servo
   myServo.attach(SERVOPIN, 500, 2500);  //attach servo to PWM capable pin 
 
   WiFi.mode(WIFI_STA);         //set wifi to station mode
@@ -151,16 +178,29 @@ void loop() {
         tools[i].isOn = FALSE;
   }
 
-  static unsigned long lastButtonTime = 0;
-  if (ButtonPressed) {
-  ButtonPressed = FALSE;  // clear the event
+  static unsigned long lastupButtonTime = 0;
+  if (UpPressed) {
+  UpPressed = FALSE;  // clear the event
 
-  if (now - lastButtonTime > 250) {   // debounce
+static unsigned long lastdownButtonTime = 0;
+  if (DownPressed) {
+  DownPressed = FALSE;  // clear the event
+
+
+  //led output (up button led will light up if collector is currently on)
+  dustCollectorStatus ? digitalWrite(UPLEDPIN, HIGH) :   digitalWrite(UPLEDPIN, LOW);
+
+  if (now - lastupButtonTime > 250) {   // debounce
     tools[MAX_TOOLS].isOn = !tools[MAX_TOOLS].isOn;
     tools[MAX_TOOLS].lastRecivedOnMessage = now;
-    lastButtonTime = now;
+    lastupButtonTime = now;
     Serial.println("Button was pressed");
   }
+
+
+
+
+
 }
   
 }
